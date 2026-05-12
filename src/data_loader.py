@@ -18,7 +18,7 @@ def load_nasa93_csv(path: str | Path) -> pd.DataFrame:
     df = df.replace(["?", "NA", "N/A", "na", "null", "NULL", ""], np.nan)
 
     for col in df.columns:
-        df[col] = pd.to_numeric(df[col], errors="ignore")
+        df[col] = pd.to_numeric(df[col], errors="coerce")
 
     return df
 
