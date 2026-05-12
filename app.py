@@ -11,26 +11,16 @@ import tempfile
 import pandas as pd
 import streamlit as st
 
-from config import COCOMO_FEATURES
+from config import COCOMO_FEATURES, TARGET_COLUMN
 from src.inference import (
     load_artifacts,
     predict_effort,
-    predict_effort_batch,
     train_and_save_artifacts,
 )
 
 
 DEFAULT_ARTIFACT_DIR = Path("artifacts")
 SAMPLE_DATA = Path("tests/data/sample_nasa93_small.csv")
-
-FEATURE_GROUPS = {
-    "Scale factors": ["prec", "flex", "resl", "team", "pmat"],
-    "Product factors": ["rely", "data", "cplx", "ruse", "docu"],
-    "Platform factors": ["time", "stor", "pvol"],
-    "Personnel factors": ["acap", "pcap", "pcon", "apex", "plex", "ltex"],
-    "Project factors": ["tool", "site", "sced"],
-    "Size": ["kloc"],
-}
 
 FEATURE_NAMES = {
     "prec": "Precedentedness",
@@ -67,8 +57,8 @@ st.set_page_config(
 
 st.title("NASA93 KNN Software Effort Prediction Demo")
 st.write(
-    "Enter the COCOMO/NASA project features below. The app predicts software-development effort "
-    "using one saved KNN regression model."
+    "Upload one NASA93 training CSV, train the KNN model, then choose one row from the table "
+    "and predict its software-development effort."
 )
 
 
@@ -78,116 +68,161 @@ def cached_load_artifacts(artifact_dir: str):
 
 
 @st.cache_data(show_spinner=False)
+def load_clean_training_table(artifact_dir: str) -> pd.DataFrame:
+    table_path = Path(artifact_dir) / "clean_training_data.csv"
+    if not table_path.exists():
+        return pd.DataFrame()
+    return pd.read_csv(table_path)
+
+
+@st.cache_data(show_spinner=False)
 def metadata_to_dataframe(metrics: list[dict]) -> pd.DataFrame:
     return pd.DataFrame(metrics)
 
 
-with st.sidebar:
-    st.header("KNN model setup")
-    artifact_dir = st.text_input("Artifact folder", value=str(DEFAULT_ARTIFACT_DIR))
+artifact_dir = st.sidebar.text_input("Artifact folder", value=str(DEFAULT_ARTIFACT_DIR))
 
-    st.caption("Use a real NASA_93_Sheet.csv for final demo quality. The bundled sample is only for smoke testing.")
-    uploaded_training_csv = st.file_uploader("Upload NASA93 training CSV", type=["csv"], key="training_csv")
+st.header("1. Upload training CSV")
+st.caption(
+    "The CSV must contain the 23 NASA93/COCOMO feature columns and the target column `effort`. "
+    "After training, the app saves `knn_model.joblib`, `preprocessor.joblib`, and `clean_training_data.csv`."
+)
 
-    train_from_sample = st.button("Train KNN demo artifacts from bundled sample")
-    train_from_upload = st.button("Train KNN artifacts from uploaded CSV", disabled=uploaded_training_csv is None)
+required_columns = COCOMO_FEATURES + [TARGET_COLUMN]
+with st.expander("Required training CSV columns"):
+    st.code(", ".join(required_columns), language="text")
 
-    if train_from_sample:
+uploaded_training_csv = st.file_uploader(
+    "Upload NASA93 training CSV",
+    type=["csv"],
+    key="training_csv",
+)
+
+if uploaded_training_csv is not None:
+    try:
+        uploaded_preview = pd.read_csv(uploaded_training_csv)
+        uploaded_preview.columns = [str(c).strip().lower() for c in uploaded_preview.columns]
+        st.subheader("Uploaded CSV preview")
+        st.dataframe(uploaded_preview.head(20), use_container_width=True, hide_index=True)
+
+        missing_cols = [col for col in required_columns if col not in uploaded_preview.columns]
+        if missing_cols:
+            st.error(f"This CSV is missing required column(s): {missing_cols}")
+        else:
+            if st.button("Train KNN from this CSV", type="primary"):
+                with tempfile.NamedTemporaryFile(delete=False, suffix=".csv") as tmp:
+                    tmp.write(uploaded_training_csv.getvalue())
+                    tmp_path = tmp.name
+
+                with st.spinner("Training KNN model from uploaded CSV..."):
+                    metadata = train_and_save_artifacts(tmp_path, artifact_dir=artifact_dir)
+
+                st.success(
+                    f"KNN training completed. Saved artifacts to `{artifact_dir}`. "
+                    f"Clean rows used: {metadata['n_samples']}."
+                )
+                st.cache_resource.clear()
+                st.cache_data.clear()
+    except Exception as exc:
+        st.error(f"Could not read or train from the uploaded CSV: {exc}")
+else:
+    st.info("Upload your NASA93 CSV above. For quick testing, you can use the sample button below.")
+    if st.button("Train KNN from bundled sample CSV"):
         if not SAMPLE_DATA.exists():
             st.error("Bundled sample data not found.")
         else:
-            with st.spinner("Training KNN demo model..."):
+            with st.spinner("Training KNN demo model from bundled sample..."):
                 metadata = train_and_save_artifacts(SAMPLE_DATA, artifact_dir=artifact_dir)
-            st.success(f"KNN artifacts saved. Model: {metadata['model_name']}")
+            st.success(
+                f"Sample KNN training completed. Saved artifacts to `{artifact_dir}`. "
+                f"Clean rows used: {metadata['n_samples']}."
+            )
             st.cache_resource.clear()
+            st.cache_data.clear()
 
-    if train_from_upload and uploaded_training_csv is not None:
-        with tempfile.NamedTemporaryFile(delete=False, suffix=".csv") as tmp:
-            tmp.write(uploaded_training_csv.getvalue())
-            tmp_path = tmp.name
-        with st.spinner("Training KNN model from uploaded CSV..."):
-            metadata = train_and_save_artifacts(tmp_path, artifact_dir=artifact_dir)
-        st.success(f"KNN artifacts saved. Model: {metadata['model_name']}")
-        st.cache_resource.clear()
+st.divider()
 
 try:
     model, preprocessor, metadata = cached_load_artifacts(artifact_dir)
 except Exception as exc:
-    st.warning(str(exc))
-    st.info("Train KNN artifacts from the sidebar first, or run `python train_artifacts.py --data path/to/NASA_93_Sheet.csv`.")
+    st.warning("No trained KNN artifacts are available yet.")
+    st.caption(str(exc))
     st.stop()
 
-left, right = st.columns([1, 1])
+st.header("2. Current KNN model")
+left, right = st.columns([1, 2])
 
 with left:
-    st.subheader("Current model")
     st.metric("Model", metadata.get("model_name", "KNN"))
-    st.metric("Training samples", metadata.get("n_samples", "Unknown"))
+    st.metric("Clean training rows", metadata.get("n_samples", "Unknown"))
 
 with right:
-    st.subheader("KNN test metrics")
     metrics_df = metadata_to_dataframe(metadata.get("metrics", []))
     if not metrics_df.empty:
-        show_cols = [col for col in ["Model", "MMRE", "RMSE", "BRE", "MAE", "R2", "Accuracy"] if col in metrics_df.columns]
+        show_cols = [
+            col
+            for col in ["Model", "MMRE", "RMSE", "BRE", "MAE", "R2", "Accuracy"]
+            if col in metrics_df.columns
+        ]
         st.dataframe(metrics_df[show_cols], use_container_width=True, hide_index=True)
     else:
         st.info("No KNN metrics stored in metadata.")
 
 st.divider()
+st.header("3. Choose one row from the training table")
 
-st.subheader("Single-project prediction")
-feature_defaults = metadata.get("feature_defaults", {})
-feature_min = metadata.get("feature_min", {})
-feature_max = metadata.get("feature_max", {})
+training_df = load_clean_training_table(artifact_dir)
+if training_df.empty:
+    st.error("The clean training table was not found. Please train from a CSV first.")
+    st.stop()
 
-with st.form("single_prediction_form"):
-    feature_values = {}
-    for group_name, group_features in FEATURE_GROUPS.items():
-        st.markdown(f"**{group_name}**")
-        cols = st.columns(min(3, len(group_features)))
-        for i, feature in enumerate(group_features):
-            default = float(feature_defaults.get(feature, 1.0 if feature != "kloc" else 10.0))
-            min_value = float(feature_min.get(feature, 0.0))
-            max_value = float(feature_max.get(feature, max(default * 2.0, default + 1.0)))
-            if max_value <= min_value:
-                max_value = min_value + 1.0
-            with cols[i % len(cols)]:
-                feature_values[feature] = st.number_input(
-                    label=f"{feature} — {FEATURE_NAMES.get(feature, feature)}",
-                    min_value=0.0,
-                    value=default,
-                    step=0.01 if feature != "kloc" else 1.0,
-                    help=f"Observed training range: {min_value:.3f} to {max_value:.3f}",
-                )
+available_cols = [col for col in required_columns if col in training_df.columns]
+display_df = training_df[available_cols].copy()
+display_df.insert(0, "row_id", range(len(display_df)))
 
-    submitted = st.form_submit_button("Predict effort")
+st.write("Select a row from this table. The selected row's 23 feature values will be sent to the KNN model.")
+st.dataframe(display_df, use_container_width=True, hide_index=True, height=360)
 
-if submitted:
+row_ids = display_df["row_id"].tolist()
+
+row_id = st.selectbox(
+    "Choose row for prediction",
+    row_ids,
+    format_func=lambda idx: (
+        f"Row {idx} | KLOC={training_df.loc[idx, 'kloc']:.3f}"
+        + (f" | actual effort={training_df.loc[idx, TARGET_COLUMN]:.3f}" if TARGET_COLUMN in training_df.columns else "")
+    ),
+)
+
+selected_row = training_df.loc[int(row_id)]
+selected_features = selected_row[COCOMO_FEATURES].to_dict()
+
+st.subheader("Selected feature values")
+selected_feature_table = pd.DataFrame(
+    {
+        "feature": COCOMO_FEATURES,
+        "meaning": [FEATURE_NAMES.get(feature, feature) for feature in COCOMO_FEATURES],
+        "value": [selected_features[feature] for feature in COCOMO_FEATURES],
+    }
+)
+st.dataframe(selected_feature_table, use_container_width=True, hide_index=True, height=360)
+
+if st.button("Predict effort for selected row", type="primary"):
     try:
-        prediction = predict_effort(feature_values, model, preprocessor, metadata)
-        st.success(f"Predicted effort: {prediction:,.2f}")
-        st.caption("Unit follows the NASA93 effort column, commonly person-months in software-effort datasets.")
+        prediction = predict_effort(selected_features, model, preprocessor, metadata)
+        st.success(f"Predicted effort by KNN: {prediction:,.2f}")
+
+        if TARGET_COLUMN in training_df.columns:
+            actual_effort = float(selected_row[TARGET_COLUMN])
+            abs_error = abs(prediction - actual_effort)
+            percent_error = abs_error / actual_effort * 100 if actual_effort != 0 else None
+
+            c1, c2, c3 = st.columns(3)
+            c1.metric("Actual effort", f"{actual_effort:,.2f}")
+            c2.metric("Absolute error", f"{abs_error:,.2f}")
+            if percent_error is not None:
+                c3.metric("Percent error", f"{percent_error:,.2f}%")
+
+        st.caption("The unit follows the NASA93 `effort` column, commonly person-months.")
     except Exception as exc:
         st.error(f"Prediction failed: {exc}")
-
-st.divider()
-
-st.subheader("Batch CSV prediction")
-st.write("Upload a CSV containing the same 23 feature columns. The app will append `predicted_effort_knn`.")
-batch_csv = st.file_uploader("Upload feature CSV for batch prediction", type=["csv"], key="batch_csv")
-if batch_csv is not None:
-    try:
-        batch_df = pd.read_csv(batch_csv)
-        output_df = predict_effort_batch(batch_df, model, preprocessor, metadata)
-        st.dataframe(output_df, use_container_width=True)
-        st.download_button(
-            "Download predictions CSV",
-            data=output_df.to_csv(index=False).encode("utf-8"),
-            file_name="predicted_effort_knn.csv",
-            mime="text/csv",
-        )
-    except Exception as exc:
-        st.error(f"Batch prediction failed: {exc}")
-
-with st.expander("Required input columns"):
-    st.code(", ".join(COCOMO_FEATURES), language="text")
