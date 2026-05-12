@@ -28,7 +28,8 @@ Predict effort for that row
 5. Saves the trained KNN model and preprocessor.
 6. Displays the cleaned training table.
 7. Lets the user choose one row from the table.
-8. Predicts the effort for the selected row.
+8. Shows visual analysis plots for the uploaded dataset and KNN predictions.
+9. Predicts the effort for the selected row.
 
 ## Folder structure
 
@@ -119,10 +120,25 @@ After opening the website:
 4. Choose one row using **Choose row for prediction**.
 5. Click **Predict effort for selected row**.
 6. The app shows:
+   - dataset summary metrics,
+   - effort distribution plot,
+   - KLOC versus effort scatter plot,
+   - actual versus predicted effort plot,
+   - top-error plot,
    - predicted effort,
    - actual effort,
    - absolute error,
    - percent error.
+
+## UI plots included
+
+After training KNN, the website shows:
+
+- **Dataset overview**: actual-effort distribution and KLOC-versus-effort scatter plot.
+- **Actual vs predicted**: scatter plot comparing real effort and KNN prediction.
+- **Prediction error**: bar chart of the rows with the largest absolute error.
+- **Prediction table**: row-level actual effort, predicted effort, absolute error, and percent error.
+- **Selected-row feature profile**: bar chart of the 23 NASA93 feature values for the chosen row.
 
 ## Run tests
 
@@ -136,3 +152,19 @@ pytest -q
 - The model predicts `log1p(effort)` internally.
 - Final predictions are converted back with `expm1()`.
 - No manual input form, batch-prediction mode, or model-selection UI is included.
+
+## Fix for `invalid error value specified`
+
+If Streamlit shows this message after uploading `NASA_93_Sheet.csv`:
+
+```text
+Could not read or train from the uploaded CSV: invalid error value specified
+```
+
+The CSV is usually not the problem. The older loader used:
+
+```python
+pd.to_numeric(..., errors="ignore")
+```
+
+That option is deprecated in recent pandas versions and can fail in some deployment environments. The corrected `src/data_loader.py` removes `errors="ignore"`, converts only the required NASA93 numeric columns with `errors="coerce"`, and keeps the Kaggle CSV format compatible with the Streamlit app.
