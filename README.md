@@ -1,90 +1,115 @@
-# Software Effort / Cost Prediction on NASA93
+# NASA93 KNN Software Effort Prediction Demo
 
-This project is a modular implementation of the paper workflow:
+This project contains a simple website demo for predicting software-development effort from NASA93/COCOMO project features.
 
-1. **Problem definition**: predict required software development effort/cost.
-2. **Dataset**: NASA93 software project dataset.
-3. **Preprocessing**: select COCOMO/NASA features, impute missing values, standardize inputs, and use `log1p(effort)` as the training target.
-4. **Techniques applied**: KNN, Cascade Forward Neural Network, Elman Neural Network, plus additional classical and neural models.
-5. **Evaluation**: MMRE, RMSE, BRE, MAE, R², and accuracy based on `1 - MMRE`.
-6. **Comparison and conclusion**: rank models using MMRE, RMSE, and BRE.
+The web demo intentionally uses **one model only: KNN regression**.  This avoids confusing the user with many model choices and makes the demo easier to explain.
 
-The implementation keeps the same logic as your single-cell Kaggle code, but separates the code into reusable modules and model files.
+## What the demo does
+
+1. Loads a NASA93 CSV dataset.
+2. Selects the 23 COCOMO/NASA input features.
+3. Applies preprocessing:
+   - median imputation,
+   - standard scaling,
+   - `log1p(effort)` target transformation.
+4. Trains a **KNN regressor**.
+5. Saves the trained KNN model and preprocessor.
+6. Opens a Streamlit website where users can:
+   - enter one project manually and predict effort,
+   - upload a CSV and get batch KNN predictions.
 
 ## Folder structure
 
 ```text
-software_effort_paper_project/
+software_effort_knn_demo/
+├── app.py
+├── train_artifacts.py
 ├── config.py
-├── main.py
 ├── requirements.txt
-├── README.md
 ├── src/
 │   ├── data_loader.py
 │   ├── preprocessing.py
 │   ├── metrics.py
-│   ├── evaluation.py
-│   ├── plotting.py
-│   ├── pipeline.py
+│   ├── inference.py
 │   └── models/
-│       ├── classical_models.py
-│       ├── knn_model.py
-│       ├── tree_models.py
-│       ├── neural_base.py
-│       ├── mlp_model.py
-│       ├── cascade_model.py
-│       └── sequence_models.py
+│       └── knn_model.py
 └── tests/
-    ├── test_metrics.py
-    ├── test_data_schema.py
-    ├── test_pipeline_smoke.py
     └── data/sample_nasa93_small.csv
 ```
 
-## How to run on Kaggle
+The original experiment files are still kept in the project, but the **website demo path uses only KNN**.
 
-Upload or attach the Kaggle dataset that contains:
+## Install dependencies
+
+```bash
+pip install -r requirements.txt
+```
+
+## Train the KNN artifact
+
+Use your real NASA93 dataset:
+
+```bash
+python train_artifacts.py --data /path/to/NASA_93_Sheet.csv --artifact-dir artifacts
+```
+
+This creates:
 
 ```text
-/kaggle/input/datasets/asmasadaqat/nasa93/NASA_93_Sheet.csv
+artifacts/knn_model.joblib
+artifacts/preprocessor.joblib
+artifacts/metadata.json
+artifacts/clean_training_data.csv
 ```
 
-Then run:
+For quick checking only, the Streamlit sidebar can also train from the bundled small sample dataset.
+
+## Run the website
 
 ```bash
-python main.py --data /kaggle/input/datasets/asmasadaqat/nasa93/NASA_93_Sheet.csv --output outputs
+streamlit run app.py
 ```
 
-To run only classical models without TensorFlow neural networks:
+Then open the local Streamlit URL shown in the terminal.
 
-```bash
-python main.py --data /kaggle/input/datasets/asmasadaqat/nasa93/NASA_93_Sheet.csv --output outputs --skip-neural
+## User input features
+
+The website asks users to enter the same 23 NASA93/COCOMO features:
+
+```text
+prec, flex, resl, team, pmat,
+rely, data, cplx, ruse, docu,
+time, stor, pvol,
+acap, pcap, pcon, apex, plex, ltex,
+tool, site, sced,
+kloc
 ```
 
-## How to run tests
+The output is:
+
+```text
+predicted effort
+```
+
+The unit follows the `effort` column in the NASA93 dataset, commonly interpreted as person-months.
+
+## Batch prediction CSV
+
+For batch prediction, upload a CSV containing all 23 input columns. The app appends:
+
+```text
+predicted_effort_knn
+```
+
+## Run tests
 
 ```bash
 pytest -q
 ```
 
-The tests use a small built-in sample dataset in `tests/data/sample_nasa93_small.csv`, so they do not need the Kaggle dataset.
-
-## Main outputs
-
-After running `main.py`, the following files are saved in the output folder:
-
-```text
-corrected_log_effort_model_comparison.csv
-corrected_best_model_predictions.csv
-actual_vs_predicted.png
-mmre_comparison.png
-rmse_comparison.png
-bre_comparison.png
-```
-
 ## Notes
 
-- The target is `effort`.
-- The model is trained on `log1p(effort)` and predictions are converted back using `expm1`.
-- This avoids negative or zero effort prediction problems.
-- Model selection uses the average rank of MMRE, RMSE, and BRE, not RMSE alone.
+- The web demo uses `KNeighborsRegressor(n_neighbors=3, weights="distance", p=2)`.
+- The model predicts `log1p(effort)` internally.
+- Final predictions are converted back with `expm1()`.
+- No model-selection UI is included because this demo is KNN-only.
